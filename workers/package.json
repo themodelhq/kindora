@@ -1,0 +1,58 @@
+{
+  "name": "@kindora/workers",
+  "version": "1.0.14",
+  "description": "KINDORA background workers \u2014 BullMQ queue consumers (Render Background Worker) + standalone cron scripts (Render Cron Jobs)",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start:prod": "node dist/index.js",
+    "start:dev": "ts-node src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint:check": "eslint .",
+    "generate": "prisma generate --schema prisma/schema.prisma",
+    "postinstall": "prisma generate --schema prisma/schema.prisma",
+    "cron:daily-analytics": "node dist/cron/daily-analytics.js",
+    "cron:campaign-reminders": "node dist/cron/campaign-reminders.js",
+    "cron:recurring-donations": "node dist/cron/recurring-donations.js",
+    "cron:weekly-reports": "node dist/cron/weekly-reports.js",
+    "cron:db-maintenance": "node dist/cron/db-maintenance.js",
+    "cron:reconciliation-digest": "node dist/cron/reconciliation-digest.js",
+    "cron:reconciliation": "node dist/cron/reconciliation-digest.js",
+    "cron:payout-recovery": "node dist/cron/payout-recovery.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1167.0",
+    "@prisma/client": "^6.0.0",
+    "bullmq": "^5.34.0",
+    "dayjs": "^1.11.13",
+    "ioredis": "^5.4.2",
+    "nodemailer": "^10.5.0",
+    "sharp": "^0.35.5",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^8.0.2",
+    "@types/web-push": "^3.6.4",
+    "eslint": "^9.17.0",
+    "prisma": "^6.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "sharp@0.33.5": true,
+    "prisma@6.19.3": true,
+    "msgpackr-extract@3.0.7": true
+  },
+  "overrides": {
+    "effect": "^3.22.1"
+  }
+}

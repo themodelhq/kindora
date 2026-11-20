@@ -1,0 +1,1462 @@
+// KINDORA - Prisma schema (PostgreSQL / Render PostgreSQL)
+// All monetary amounts are BigInt values in MINOR UNITS (e.g. kobo for NGN, cents for USD).
+// Never use floating point arithmetic for money.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity & access
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  USER
+  ORG_ADMIN
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum TokenPurpose {
+  VERIFY_EMAIL
+  PASSWORD_RESET
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  avatarUrl       String?
+  phone           String?
+  role            UserRole   @default(USER)
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  country         String?
+  locale          String     @default("en")
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  sessions               Session[]
+  authTokens             AuthToken[]
+  kycRecords             KycRecord[]             @relation("KycSubject")
+  kycReviewed            KycRecord[]             @relation("KycReviewer")
+  campaignsCreated       Campaign[]              @relation("CampaignCreator")
+  orgMemberships         OrganizationMember[]
+  organizationsOwned     Organization[]          @relation("OrgOwner")
+  beneficiariesGuarded   Beneficiary[]           @relation("BeneficiaryGuardian")
+  updatesAuthored        CampaignUpdate[]        @relation("UpdateAuthor")
+  withdrawalsReviewed    Withdrawal[]            @relation("WithdrawalReviewer")
+  withdrawalsPaid        Withdrawal[]            @relation("WithdrawalPayer")
+  withdrawalsSecondOk    Withdrawal[]            @relation("WithdrawalSecondApprover")
+  withdrawalsReconciled  Withdrawal[]            @relation("WithdrawalReconciler")
+  storedFiles            StoredFile[]            @relation("StoredFileUploader")
+  donations              Donation[]              @relation("Donor")
+  recurringDonations     RecurringDonation[]
+  refundsRequested       Refund[]                @relation("RefundRequester")
+  withdrawalsRequested   Withdrawal[]            @relation("WithdrawalRequester")
+  payoutMethods          PayoutMethod[]
+  circlesOwned           Circle[]                @relation("CircleOwner")
+  circleMemberships      CircleMember[]
+  circleContributions    CircleContribution[]
+  matchingSponsorships   MatchingPool[]
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  pushSubscriptions      PushSubscription[]
+  aiGenerations          AiGeneration[]
+  expensesSubmitted      ExpenseRecord[]         @relation("ExpenseSubmitter")
+  auditLogs              AuditLog[]
+  campaignComments       CampaignComment[]
+  mfaCredential          MfaCredential?
+  withdrawalApprovals    WithdrawalApproval[]      @relation("WithdrawalApprover")
+  withdrawalInvalidations WithdrawalApproval[]    @relation("WithdrawalApprovalInvalidator")
+  payoutAttemptsInitiated PayoutAttempt[]          @relation("PayoutAttemptInitiator")
+  payoutReconciliations  PayoutReconciliation[]    @relation("PayoutReconciler")
+  payoutBeneficiariesCreated PayoutBeneficiary[]   @relation("PayoutBeneficiaryCreator")
+  manualReviewsResolved  ManualReviewCase[]        @relation("ManualReviewResolver")
+  manualReviewsReviewed  ManualReviewCase[]        @relation("ManualReviewReviewer")
+
+  @@index([email])
+  @@index([status])
+}
+
+model Session {
+  id           String    @id @default(cuid())
+  userId       String
+  tokenHash    String    @unique
+  userAgent    String?
+  ip           String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuthToken {
+  id        String       @id @default(cuid())
+  userId    String
+  purpose   TokenPurpose
+  tokenHash String       @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+// ---------------------------------------------------------------------------
+// KYC
+// ---------------------------------------------------------------------------
+
+enum KycLevel {
+  BASIC
+  VERIFIED
+  ENHANCED
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model KycRecord {
+  id                 String    @id @default(cuid())
+  userId             String?
+  organizationId     String?
+  level              KycLevel  @default(BASIC)
+  status             KycStatus @default(PENDING)
+  legalName          String
+  idType             String?
+  idNumberLast4      String?
+  idDocumentUrl      String?
+  selfieUrl          String?
+  addressDocumentUrl String?
+  country            String?
+  rejectionReason    String?
+  reviewedById       String?
+  reviewedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user         User?         @relation("KycSubject", fields: [userId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  reviewedBy   User?         @relation("KycReviewer", fields: [reviewedById], references: [id])
+  storedFiles  StoredFile[]
+
+  @@index([status])
+  @@index([userId])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Organizations & beneficiaries
+// ---------------------------------------------------------------------------
+
+enum OrgStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+enum OrgMemberRole {
+  OWNER
+  ADMIN
+  MANAGER
+}
+
+model Organization {
+  id                 String    @id @default(cuid())
+  slug               String    @unique
+  name               String
+  description        String?
+  logoUrl            String?
+  website            String?
+  country            String?
+  registrationNumber String?
+  status             OrgStatus @default(PENDING)
+  ownerUserId        String
+  verifiedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  owner         User                 @relation("OrgOwner", fields: [ownerUserId], references: [id])
+  members       OrganizationMember[]
+  campaigns     Campaign[]
+  kycRecords    KycRecord[]
+  beneficiaries Beneficiary[]
+  payoutMethods PayoutMethod[]
+  storedFiles   StoredFile[]
+
+  @@index([status])
+  @@index([ownerUserId])
+}
+
+model OrganizationMember {
+  id             String        @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgMemberRole @default(MANAGER)
+  joinedAt       DateTime      @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+enum BeneficiaryType {
+  INDIVIDUAL
+  ORGANIZATION
+  COMMUNITY
+}
+
+model Beneficiary {
+  id                 String          @id @default(cuid())
+  name               String
+  type               BeneficiaryType @default(INDIVIDUAL)
+  organizationId     String?
+  guardianUserId     String?
+  description        String?
+  verificationStatus KycStatus       @default(PENDING)
+  createdAt          DateTime        @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  guardian     User?         @relation("BeneficiaryGuardian", fields: [guardianUserId], references: [id])
+  campaigns    Campaign[]
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns
+// ---------------------------------------------------------------------------
+
+enum CampaignStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  COMPLETED
+  REJECTED
+  SUSPENDED
+}
+
+enum CampaignType {
+  INDIVIDUAL
+  ORGANIZATION
+}
+
+model Category {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  description String?
+  icon        String?
+
+  campaigns Campaign[]
+}
+
+model Campaign {
+  id             String         @id @default(cuid())
+  slug           String         @unique
+  title          String
+  excerpt        String?
+  story          String
+  status         CampaignStatus @default(DRAFT)
+  type           CampaignType   @default(INDIVIDUAL)
+  targetAmount   BigInt
+  raisedAmount   BigInt         @default(0)
+  donorCount     Int            @default(0)
+  viewCount      Int            @default(0)
+  currency       String         @default("NGN")
+  deadline       DateTime?
+  country        String?
+  city           String?
+  coverImageUrl  String?
+  videoUrl       String?
+  categoryId     String
+  createdById    String
+  organizationId String?
+  beneficiaryId  String?
+  isFeatured     Boolean        @default(false)
+  allowComments  Boolean        @default(true)
+  approvalNote   String?
+  publishedAt    DateTime?
+  completedAt    DateTime?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  category           Category            @relation(fields: [categoryId], references: [id])
+  createdBy          User                @relation("CampaignCreator", fields: [createdById], references: [id])
+  circles            Circle[]
+  organization       Organization?       @relation(fields: [organizationId], references: [id])
+  beneficiary        Beneficiary?        @relation(fields: [beneficiaryId], references: [id])
+  media              CampaignMedia[]
+  updates            CampaignUpdate[]
+  comments           CampaignComment[]
+  donations          Donation[]
+  withdrawals        Withdrawal[]
+  matchingPools      MatchingPool[]
+  expenses           ExpenseRecord[]
+  statDaily          CampaignStatDaily[]
+  fraudSignals       FraudSignal[]
+  recurringDonations RecurringDonation[]
+  storedFiles        StoredFile[]
+  @@index([status, isFeatured])
+  @@index([categoryId])
+  @@index([createdById])
+  @@index([organizationId])
+  @@index([country])
+  @@index([createdAt])
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+model CampaignMedia {
+  id         String    @id @default(cuid())
+  campaignId String
+  url        String
+  type       MediaType @default(IMAGE)
+  orderIndex Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+model CampaignUpdate {
+  id         String   @id @default(cuid())
+  campaignId String
+  authorId   String
+  title      String
+  body       String
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  author   User     @relation("UpdateAuthor", fields: [authorId], references: [id])
+
+  @@index([campaignId, createdAt])
+}
+
+model CampaignComment {
+  id         String   @id @default(cuid())
+  campaignId String
+  userId     String
+  body       String
+  isHidden   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([campaignId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Donations & payments
+// ---------------------------------------------------------------------------
+
+enum DonationStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  CANCELLED
+}
+
+enum PaymentProvider {
+  PAYSTACK
+  FLUTTERWAVE
+  STRIPE
+  PAYPAL
+  MOCK
+  MANUAL
+}
+
+model Donation {
+  id                  String          @id @default(cuid())
+  publicRef           String          @unique
+  campaignId          String
+  donorUserId         String?
+  guestEmail          String?
+  guestName           String?
+  isAnonymous         Boolean         @default(false)
+  amount              BigInt
+  currency            String
+  tipAmount           BigInt          @default(0)
+  totalCharged        BigInt?
+  chargeCurrency      String?
+  status              DonationStatus  @default(PENDING)
+  provider            PaymentProvider
+  circleId            String?
+  providerReference   String?         @unique
+  message             String?
+  recurringDonationId String?
+  matchingPoolId      String?
+  matchedAmount       BigInt          @default(0)
+  receiptNumber       String?         @unique
+  failureReason       String?
+  metadata            Json?
+  createdAt           DateTime        @default(now())
+  succeededAt         DateTime?
+  refundedAt          DateTime?
+  providerFeeMinor    BigInt?
+  providerAuthRef     String?
+
+  campaign            Campaign             @relation(fields: [campaignId], references: [id])
+  donor               User?                @relation("Donor", fields: [donorUserId], references: [id])
+  recurringDonation   RecurringDonation?   @relation(fields: [recurringDonationId], references: [id])
+  matchingPool        MatchingPool?        @relation(fields: [matchingPoolId], references: [id])
+  circle              Circle?              @relation("CircleDonation", fields: [circleId], references: [id])
+  circleContributions CircleContribution[]
+  refunds             Refund[]
+
+  @@index([campaignId, status])
+  @@index([donorUserId])
+  @@index([createdAt])
+  @@index([status])
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  DUPLICATE
+}
+
+model WebhookEvent {
+  id             String          @id @default(cuid())
+  provider       PaymentProvider
+  eventId        String?
+  eventType      String?
+  reference      String?
+  signatureValid Boolean
+  status         WebhookStatus   @default(RECEIVED)
+  payload        Json?
+  error          String?
+  handledAction  String?
+  processedAt    DateTime?
+  createdAt      DateTime        @default(now())
+
+  @@unique([provider, eventId])
+  @@index([reference])
+  @@index([status, createdAt])
+}
+
+enum RecurringFrequency {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum RecurringStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  COMPLETED
+}
+
+model RecurringDonation {
+  id                  String             @id @default(cuid())
+  donorUserId         String
+  campaignId          String
+  amount              BigInt
+  currency            String
+  frequency           RecurringFrequency @default(MONTHLY)
+  status              RecurringStatus    @default(ACTIVE)
+  provider            PaymentProvider
+  providerCustomerRef String?
+  providerAuthRef     String?
+  nextChargeAt        DateTime
+  chargeCount         Int                @default(0)
+  lastChargeAt        DateTime?
+  lastDonationId      String?
+  failureCount        Int                @default(0)
+  lastFailureAt       DateTime?
+  lastFailureReason   String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  donor     User       @relation(fields: [donorUserId], references: [id])
+  campaign  Campaign   @relation(fields: [campaignId], references: [id])
+  donations Donation[]
+
+  @@index([nextChargeAt, status])
+  @@index([donorUserId])
+  @@index([campaignId])
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSED
+  FAILED
+}
+
+model Refund {
+  id            String       @id @default(cuid())
+  donationId    String
+  amount        BigInt
+  reason        String?
+  status        RefundStatus @default(PENDING)
+  providerRef   String?
+  requestedById String?
+  processedAt   DateTime?
+  createdAt     DateTime     @default(now())
+
+  donation    Donation @relation(fields: [donationId], references: [id])
+  requestedBy User?    @relation("RefundRequester", fields: [requestedById], references: [id])
+
+  @@index([donationId])
+  @@index([status])
+}
+
+enum WithdrawalStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  PROCESSING
+  PAID
+  REJECTED
+  FAILED
+  CANCELLED
+  REQUIRES_INFORMATION
+  REQUIRES_RECONCILIATION
+  REVERSED
+}
+
+// -------------------------------------------------------------------------
+// Payout lockdown (v1.0.4) — immutable approval history, payout attempt
+// registry and structured reconciliation results.
+// -------------------------------------------------------------------------
+
+enum ApprovalRole {
+  FIRST_APPROVER
+  SECOND_APPROVER
+  EXECUTOR
+}
+
+enum ApprovalStatus {
+  ACTIVE
+  INVALIDATED
+}
+
+// v1.0.7 §4.1 — durable initiation state machine. The attempt status now
+// distinguishes "registered locally" (INITIATED), "provider call ambiguous"
+// (SUBMISSION_PENDING), "provider accepted the transfer" (PROVIDER_ACCEPTED)
+// and "escalated to a manual review case" (MANUAL_REVIEW). Every transition
+// must pass the centralized attempt-transition map in payout-state-machine.ts.
+enum PayoutAttemptStatus {
+  INITIATED
+  SUBMISSION_PENDING
+  PROVIDER_ACCEPTED
+  PENDING
+  SUCCESSFUL
+  FAILED
+  UNKNOWN
+  REVERSED
+  MANUAL_REVIEW
+}
+
+// v1.0.7 §7.2 — reconciliation classification extended with provider reversals,
+// reference mismatch, internal-state mismatch, incomplete provider evidence and
+// the explicit manual-review-required outcome. Existing names are preserved so
+// historical rows keep their meaning.
+enum ReconciliationResult {
+  MATCHED
+  PROVIDER_SUCCESS_INTERNAL_PENDING
+  PROVIDER_FAILED_INTERNAL_PROCESSING
+  PROVIDER_PENDING
+  PROVIDER_UNKNOWN
+  PROVIDER_REVERSED
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  DESTINATION_MISMATCH
+  REFERENCE_MISMATCH
+  DUPLICATE_REFERENCE
+  INTERNAL_STATE_MISMATCH
+  PROVIDER_DATA_INCOMPLETE
+  REQUIRES_MANUAL_INVESTIGATION
+  MANUAL_REVIEW_REQUIRED
+}
+
+// v1.0.7 §4.2 — transactional outbox for provider transfer initiation.
+enum PayoutOutboxStatus {
+  PENDING
+  IN_FLIGHT
+  SUBMITTED
+  FAILED_PERMANENT
+  EXHAUSTED
+}
+
+// v1.0.7 §5.2 — provider-specific beneficiary identity.
+enum PayoutBeneficiaryStatus {
+  VALIDATING
+  ACTIVE
+  RETIRED
+  INVALIDATED
+}
+
+enum VerificationSource {
+  API_VERIFY
+  WEBHOOK
+  MANUAL_REVIEW
+  RECONCILIATION_SWEEP
+}
+
+enum ManualReviewStatus {
+  OPEN
+  RESOLVED
+}
+
+// v1.0.7 §9 — manual review categories. The category names exactly the reason
+// automatic settlement was blocked; the workflow never lets an administrator
+// manufacture a successful outcome without authoritative provider evidence.
+enum ManualReviewCategory {
+  PROVIDER_SUCCESS_INSUFFICIENT_BENEFICIARY_EVIDENCE
+  PROVIDER_PENDING
+  PROVIDER_UNKNOWN
+  PROVIDER_UNAVAILABLE
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  BENEFICIARY_MISMATCH
+  REFERENCE_MISMATCH
+  DUPLICATE_REFERENCE
+  PROVIDER_REVERSAL
+  INTERNAL_STATE_MISMATCH
+  PROVIDER_DATA_INCOMPLETE
+  STUCK_OUTBOX_EVENT
+}
+
+enum MfaCredentialStatus {
+  ENROLLING
+  ACTIVE
+  DISABLED
+}
+
+model MfaCredential {
+  userId          String             @id
+  /** AES-256-GCM encrypted TOTP secret (RFC 6238). Never stored in plaintext. */
+  secretEnc       String
+  status          MfaCredentialStatus @default(ENROLLING)
+  confirmedAt     DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model WithdrawalApproval {
+  id                String         @id @default(cuid())
+  withdrawalId      String
+  /** Approval cycle: incremented whenever an approval is invalidated. */
+  cycle             Int            @default(1)
+  role              ApprovalRole
+  approverId        String
+  status            ApprovalStatus @default(ACTIVE)
+  /** Exact amount snapshot this approval authorizes (minor units). */
+  amountAtApproval  BigInt
+  currencyAtApproval String
+  /** v1.0.7 §8.3 — destination version bound at approval time; a mismatch invalidates the cycle. */
+  destinationVersionAtApproval Int?
+  /** v1.0.7 §8.3 — SHA-256 over the immutable payout-detail snapshot this approval authorizes. */
+  snapshotHash      String?
+  note              String?
+  approvedAt        DateTime       @default(now())
+  invalidatedAt     DateTime?
+  invalidatedById   String?
+  metadata          Json?
+
+  withdrawal  Withdrawal @relation(fields: [withdrawalId], references: [id])
+  approver    User       @relation("WithdrawalApprover", fields: [approverId], references: [id])
+  invalidatedBy User?    @relation("WithdrawalApprovalInvalidator", fields: [invalidatedById], references: [id])
+
+  @@unique([withdrawalId, cycle, role])
+  @@index([withdrawalId])
+  @@index([approverId])
+}
+
+model PayoutAttempt {
+  id                String              @id @default(cuid())
+  withdrawalId      String
+  attemptNo         Int
+  provider          String
+  /** Durable internal idempotency key — one logical attempt, one transfer. */
+  idempotencyKey    String              @unique
+  /** Provider transfer reference (Paystack reference/transfer_code, FLW reference). NEVER substituted for the idempotency key. */
+  providerTransferRef String?           @unique
+  /** v1.0.7 §4.3 — provider-native transfer identifier (Paystack numeric id, FLW numeric id). Distinct from the reference. */
+  providerTransferId String?
+  /** v1.0.7 §4.3 — SHA-256 request fingerprint; DB-level duplicate-submission prevention. */
+  requestFingerprint String?            @unique
+  amount            BigInt
+  currency          String
+  /** Hashed destination identifier (never raw account numbers). */
+  destinationRef    String?
+  /** v1.0.7 §5.2 — the validated provider beneficiary this transfer must use. */
+  beneficiaryId     String?
+  status            PayoutAttemptStatus @default(INITIATED)
+  /** Provider-reported raw status string, preserved as evidence. */
+  providerStatus    String?
+  /** Final classification: SUCCESSFUL | FAILED | PENDING | UNKNOWN | REVERSED. */
+  classification    String?
+  failureReason     String?
+  lastVerifiedAt    DateTime?
+  initiatedById     String?
+  resolvedAt        DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id])
+  initiatedBy User?     @relation("PayoutAttemptInitiator", fields: [initiatedById], references: [id])
+  beneficiary PayoutBeneficiary? @relation(fields: [beneficiaryId], references: [id])
+  reconciliations PayoutReconciliation[]
+  evidenceRecords PayoutVerificationEvidence[]
+  outbox          PayoutOutbox?
+  reviewCases     ManualReviewCase[]
+
+  @@unique([withdrawalId, attemptNo])
+  @@index([withdrawalId])
+  @@index([status])
+  @@index([providerTransferId])
+}
+
+// v1.0.7 §5.2 — provider-specific beneficiary identity. The externalRef is the
+// ONLY beneficiary identifier ever compared against provider verification data
+// (never the destination JSON hash). Each (withdrawal, provider, destination
+// version) maps to exactly one beneficiary; a destination change bumps the
+// version so a stale recipient code can never be silently reused.
+model PayoutBeneficiary {
+  id                  String                @id @default(cuid())
+  withdrawalId        String
+  provider            String
+  destinationVersion  Int
+  currency            String
+  /** Provider recipient identifier (Paystack recipient_code / FLW beneficiary id). */
+  externalRef         String
+  /** SHA-256 over the normalized provider-visible identity (bank+account+name or provider echo). */
+  fingerprint         String
+  /** SHA-256 of the exact withdrawal destination JSON this beneficiary was derived from. */
+  destinationHash     String
+  status              PayoutBeneficiaryStatus @default(ACTIVE)
+  /** Masked provider details only — never raw account numbers (PII). */
+  maskedDetails       Json?
+  validatedAt         DateTime?
+  createdById         String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id])
+  createdBy  User?      @relation("PayoutBeneficiaryCreator", fields: [createdById], references: [id])
+  attempts   PayoutAttempt[]
+
+  @@unique([withdrawalId, provider, destinationVersion])
+  @@index([provider, externalRef])
+  @@index([withdrawalId])
+  @@index([status])
+}
+
+// v1.0.7 §4.2 — transactional outbox. The intent row is COMMITTED together
+// with the attempt before any provider call, so a crash can never lose or
+// duplicate a submission. Exactly one outbox row per attempt.
+model PayoutOutbox {
+  id                String              @id @default(cuid())
+  attemptId         String              @unique
+  withdrawalId      String
+  idempotencyKey    String              @unique
+  eventType         String              @default("INITIATE_TRANSFER")
+  status            PayoutOutboxStatus  @default(PENDING)
+  attempts          Int                 @default(0)
+  /** SHA-256 over the canonical initiation request; a second submission with a different fingerprint is refused. */
+  requestFingerprint String
+  /** Minimal, secret-free payload consumed by the submission processor. */
+  payload           Json
+  lastError         String?
+  claimedBy         String?
+  claimedAt         DateTime?
+  nextRunAt         DateTime            @default(now())
+  submittedAt       DateTime?
+  processedAt       DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  attempt PayoutAttempt @relation(fields: [attemptId], references: [id])
+
+  @@index([status, nextRunAt])
+  @@index([withdrawalId])
+}
+
+// v1.0.7 §5.3/§17 — immutable provider verification evidence. Every provider
+// response (API verify, webhook, manual review) is persisted BEFORE it can be
+// applied, with a canonical-evidence hash for tamper detection.
+model PayoutVerificationEvidence {
+  id                 String             @id @default(cuid())
+  withdrawalId       String
+  attemptId          String
+  source             VerificationSource
+  provider           String
+  /** Provider-reported raw status — preserved verbatim, never normalized away. */
+  rawStatus          String?
+  classification     String?
+  providerTransferRef String?
+  providerTransferId String?
+  amountMinor        BigInt?
+  currency           String?
+  beneficiaryRef     String?
+  destinationRef     String?
+  /** SHA-256 over the canonical evidence record (tamper detection). */
+  evidenceHash       String
+  /** Sanitized subset of the provider response — no secrets, no full PII. */
+  payload            Json?
+  correlationId      String?
+  createdById        String?
+  createdAt          DateTime           @default(now())
+
+  attempt PayoutAttempt @relation(fields: [attemptId], references: [id])
+
+  @@index([attemptId])
+  @@index([withdrawalId])
+}
+
+// v1.0.7 §9 — controlled manual review. Automatic settlement that fails closed
+// opens a case; resolution requires fresh MFA + recorded evidence and can never
+// mark an unverified transfer successful by itself.
+model ManualReviewCase {
+  id              String               @id @default(cuid())
+  withdrawalId    String
+  attemptId       String?
+  category        ManualReviewCategory
+  status          ManualReviewStatus   @default(OPEN)
+  openedReason    String
+  evidence        Json?
+  resolution      String?
+  resolutionNote  String?
+  resolvedById    String?
+  reviewerId      String?
+  mfaPurposeUsed  String?
+  correlationId   String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  withdrawal Withdrawal     @relation(fields: [withdrawalId], references: [id])
+  attempt    PayoutAttempt? @relation(fields: [attemptId], references: [id])
+  resolvedBy User?          @relation("ManualReviewResolver", fields: [resolvedById], references: [id])
+  reviewer   User?          @relation("ManualReviewReviewer", fields: [reviewerId], references: [id])
+
+  @@index([status])
+  @@index([withdrawalId])
+  @@index([attemptId])
+}
+
+model PayoutReconciliation {
+  id                String                @id @default(cuid())
+  withdrawalId      String
+  attemptId         String?
+  result            ReconciliationResult
+  providerStatus    String?
+  internalStatus    String?
+  amountMatched     Boolean?
+  currencyMatched   Boolean?
+  destinationMatched Boolean?
+  /** Provider verification evidence (sanitized subset of the API response). */
+  providerEvidence  Json?
+  note              String?
+  createdById       String?
+  createdAt         DateTime              @default(now())
+
+  withdrawal Withdrawal     @relation(fields: [withdrawalId], references: [id])
+  attempt    PayoutAttempt? @relation(fields: [attemptId], references: [id])
+  createdBy  User?          @relation("PayoutReconciler", fields: [createdById], references: [id])
+
+  @@index([withdrawalId])
+  @@index([attemptId])
+  @@index([result])
+}
+
+// ---------------------------------------------------------------------------
+// File storage registry — every uploaded object is tracked with ownership,
+// visibility and scan lifecycle so private documents are never exposed by
+// key-guessing and every privileged access can be audited.
+// ---------------------------------------------------------------------------
+
+enum FileVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum StoredFileKind {
+  CAMPAIGN_IMAGE
+  CAMPAIGN_MEDIA
+  AVATAR
+  DOCUMENT
+  IDENTITY
+  EXPENSE_EVIDENCE
+  PAYOUT_EVIDENCE
+}
+
+enum StoredFileStatus {
+  UPLOADED
+  QUARANTINED
+  SCANNING
+  APPROVED
+  REJECTED
+  FAILED
+  EXPIRED
+}
+
+enum ScanVerdict {
+  PENDING
+  CLEAN
+  INFESTED
+  SKIPPED
+  UNAVAILABLE
+}
+
+model StoredFile {
+  id             String           @id @default(cuid())
+  key            String           @unique
+  kind           StoredFileKind
+  visibility     FileVisibility
+  status         StoredFileStatus @default(UPLOADED)
+  scanVerdict    ScanVerdict      @default(PENDING)
+  fileName       String
+  contentType    String
+  sizeBytes      BigInt
+  uploaderId     String
+  campaignId     String?
+  organizationId String?
+  withdrawalId   String?
+  /** Withdrawal this file serves as manual payout evidence for (v1.0.4). Unique: a file can be evidence for at most one settlement (reuse prevention). */
+  evidenceForWithdrawalId String? @unique
+  kycRecordId    String?
+  scanNote       String?
+  scannedAt      DateTime?
+  approvedAt     DateTime?
+  rejectedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  uploader     User          @relation("StoredFileUploader", fields: [uploaderId], references: [id])
+  campaign     Campaign?     @relation(fields: [campaignId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  withdrawal   Withdrawal?   @relation("WithdrawalFileAttachment", fields: [withdrawalId], references: [id])
+  evidenceFor  Withdrawal?   @relation("WithdrawalEvidence", fields: [evidenceForWithdrawalId], references: [id])
+  kycRecord    KycRecord?    @relation(fields: [kycRecordId], references: [id])
+
+  @@index([uploaderId])
+  @@index([status])
+  @@index([campaignId])
+  @@index([organizationId])
+  @@index([kycRecordId])
+}
+
+enum PayoutMethodType {
+  BANK
+  MOBILE_MONEY
+}
+
+model Withdrawal {
+  id                  String           @id @default(cuid())
+  publicRef           String           @unique
+  campaignId          String
+  requestedById       String
+  amount              BigInt
+  feeAmount           BigInt           @default(0)
+  netAmount           BigInt
+  currency            String
+  method              PayoutMethodType @default(BANK)
+  destination         Json
+  status              WithdrawalStatus @default(PENDING)
+  adminNote           String?
+  reviewedById        String?
+  reviewedAt          DateTime?
+  providerTransferRef String?
+  failureReason       String?
+  paidAt              DateTime?
+  payoutProvider      String?
+  payoutProviderTxnId String?
+  /** Legacy free-text evidence (v1.0.3 history). New settlements must use a StoredFile evidence record. */
+  evidenceUrl         String?
+  paidById            String?
+  secondApprovedById  String?
+  secondApprovedAt    DateTime?
+  reconciledAt        DateTime?
+  reconciledById      String?
+  /** Current approval cycle — incremented when an approval is invalidated. */
+  approvalCycle       Int              @default(1)
+  /** v1.0.7 §5.4 — bumped on any beneficiary destination change; invalidates approvals + beneficiaries. */
+  destinationVersion  Int              @default(1)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  campaign         Campaign @relation(fields: [campaignId], references: [id])
+  requestedBy      User     @relation("WithdrawalRequester", fields: [requestedById], references: [id])
+  reviewedBy       User?    @relation("WithdrawalReviewer", fields: [reviewedById], references: [id])
+  paidBy           User?    @relation("WithdrawalPayer", fields: [paidById], references: [id])
+  secondApprovedBy User?    @relation("WithdrawalSecondApprover", fields: [secondApprovedById], references: [id])
+  reconciledBy     User?    @relation("WithdrawalReconciler", fields: [reconciledById], references: [id])
+  evidenceFile     StoredFile? @relation("WithdrawalEvidence")
+  files            StoredFile[] @relation("WithdrawalFileAttachment")
+  approvals        WithdrawalApproval[]
+  payoutAttempts   PayoutAttempt[]
+  reconciliations  PayoutReconciliation[]
+  beneficiaries    PayoutBeneficiary[]
+  reviewCases      ManualReviewCase[]
+
+  @@index([campaignId, status])
+  @@index([status])
+}
+
+model PayoutMethod {
+  id             String           @id @default(cuid())
+  userId         String?
+  organizationId String?
+  type           PayoutMethodType @default(BANK)
+  details        Json
+  isDefault      Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+
+  user         User?         @relation(fields: [userId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([userId])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Double-entry impact ledger
+// ---------------------------------------------------------------------------
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+model LedgerAccount {
+  id         String            @id @default(cuid())
+  code       String            @unique
+  name       String
+  type       LedgerAccountType
+  campaignId String?
+  currency   String
+  createdAt  DateTime          @default(now())
+
+  entries LedgerEntry[]
+
+  @@index([campaignId])
+}
+
+enum LedgerTxnType {
+  DONATION
+  TIP
+  WITHDRAWAL
+  WITHDRAWAL_FEE
+  PROVIDER_FEE
+  REFUND
+  MATCH
+  ADJUSTMENT
+}
+
+model LedgerTransaction {
+  id          String        @id @default(cuid())
+  reference   String        @unique
+  type        LedgerTxnType
+  description String?
+  metadata    Json?
+  postedAt    DateTime      @default(now())
+  createdAt   DateTime      @default(now())
+
+  entries LedgerEntry[]
+}
+
+model LedgerEntry {
+  id            String          @id @default(cuid())
+  transactionId String
+  accountId     String
+  direction     LedgerDirection
+  amount        BigInt
+  currency      String
+
+  transaction LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account     LedgerAccount     @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@index([transactionId])
+}
+
+// ---------------------------------------------------------------------------
+// Matching pools
+// ---------------------------------------------------------------------------
+
+enum MatchingPoolStatus {
+  ACTIVE
+  EXHAUSTED
+  ENDED
+}
+
+model MatchingPool {
+  id             String             @id @default(cuid())
+  campaignId     String
+  sponsorUserId  String
+  name           String
+  totalCommitted BigInt
+  matchedAmount  BigInt             @default(0)
+  matchRatio     Int                @default(100)
+  capPerDonation BigInt?
+  status         MatchingPoolStatus @default(ACTIVE)
+  startsAt       DateTime?
+  endsAt         DateTime?
+  createdAt      DateTime           @default(now())
+
+  campaign  Campaign   @relation(fields: [campaignId], references: [id])
+  sponsor   User       @relation(fields: [sponsorUserId], references: [id])
+  donations Donation[]
+
+  @@index([campaignId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Circles (giving groups)
+// ---------------------------------------------------------------------------
+
+enum CirclePrivacy {
+  PUBLIC
+  PRIVATE
+}
+
+enum CircleRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Circle {
+  id            String        @id @default(cuid())
+  slug          String        @unique
+  name          String
+  description   String?
+  coverImageUrl String?
+  privacy       CirclePrivacy @default(PUBLIC)
+  inviteCode    String?       @unique
+  goalAmount    BigInt?
+  currency      String        @default("NGN")
+  campaignId    String?
+  createdById   String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  campaign      Campaign?            @relation(fields: [campaignId], references: [id])
+  createdBy     User                 @relation("CircleOwner", fields: [createdById], references: [id])
+  members       CircleMember[]
+  contributions CircleContribution[]
+  donations     Donation[]           @relation("CircleDonation")
+
+  @@index([createdById])
+}
+
+model CircleMember {
+  id       String     @id @default(cuid())
+  circleId String
+  userId   String
+  role     CircleRole @default(MEMBER)
+  joinedAt DateTime   @default(now())
+
+  circle Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([circleId, userId])
+  @@index([userId])
+}
+
+enum ContributionKind {
+  DONATION
+  PLEDGE
+}
+
+model CircleContribution {
+  id         String           @id @default(cuid())
+  circleId   String
+  userId     String
+  donationId String?          @unique
+  kind       ContributionKind @default(DONATION)
+  amount     BigInt
+  currency   String
+  note       String?
+  createdAt  DateTime         @default(now())
+
+  circle   Circle    @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id])
+  donation Donation? @relation(fields: [donationId], references: [id])
+
+  @@index([circleId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+model NotificationPreference {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  emailDonations Boolean  @default(true)
+  emailUpdates   Boolean  @default(true)
+  emailMarketing Boolean  @default(false)
+  emailSecurity  Boolean  @default(true)
+  pushEnabled    Boolean  @default(true)
+  smsEnabled     Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Moderation, fraud & AI
+// ---------------------------------------------------------------------------
+
+enum ModerationEntityType {
+  CAMPAIGN
+  COMMENT
+  USER
+  ORGANIZATION
+}
+
+enum ModerationReason {
+  USER_REPORT
+  AUTO_FRAUD
+  ADMIN_HOLD
+}
+
+enum ModerationStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_ACTIONED
+  RESOLVED_CLEARED
+}
+
+model ModerationCase {
+  id             String               @id @default(cuid())
+  entityType     ModerationEntityType
+  entityId       String
+  reason         ModerationReason
+  status         ModerationStatus     @default(OPEN)
+  reporterUserId String?
+  description    String?
+  assignedToId   String?
+  resolutionNote String?
+  resolvedAt     DateTime?
+  createdAt      DateTime             @default(now())
+
+  @@index([status])
+}
+
+enum FraudSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum FraudStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
+model FraudSignal {
+  id           String        @id @default(cuid())
+  campaignId   String?
+  donationId   String?
+  userId       String?
+  rule         String
+  severity     FraudSeverity @default(LOW)
+  status       FraudStatus   @default(OPEN)
+  details      Json?
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime      @default(now())
+
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([status, severity])
+}
+
+enum AiKind {
+  STORY_DRAFT
+  STORY_IMPROVE
+  TRANSLATION
+  FRAUD_REVIEW
+}
+
+model AiGeneration {
+  id         String   @id @default(cuid())
+  userId     String
+  kind       AiKind
+  input      Json?
+  output     String
+  tokensUsed Int?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Analytics, transparency & operations
+// ---------------------------------------------------------------------------
+
+model CampaignStatDaily {
+  id             String   @id @default(cuid())
+  campaignId     String
+  date           DateTime
+  views          Int      @default(0)
+  donationCount  Int      @default(0)
+  donationAmount BigInt   @default(0)
+  currency       String
+  shares         Int      @default(0)
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, date])
+}
+
+model PlatformStatDaily {
+  id             String   @id @default(cuid())
+  date           DateTime @unique
+  donationCount  Int      @default(0)
+  donationAmount BigInt   @default(0)
+  tipAmount      BigInt   @default(0)
+  currency       String
+  newUsers       Int      @default(0)
+  newCampaigns   Int      @default(0)
+}
+
+enum ExpenseStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+model ExpenseRecord {
+  id            String        @id @default(cuid())
+  campaignId    String
+  description   String
+  amount        BigInt
+  currency      String
+  evidenceUrl   String?
+  status        ExpenseStatus @default(PENDING_APPROVAL)
+  submittedById String
+  approvedById  String?
+  approvedAt    DateTime?
+  createdAt     DateTime      @default(now())
+
+  campaign    Campaign @relation(fields: [campaignId], references: [id])
+  submittedBy User     @relation("ExpenseSubmitter", fields: [submittedById], references: [id])
+
+  @@index([campaignId, status])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id])
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+}
+
+model EmailLog {
+  id                String    @id @default(cuid())
+  userId            String?
+  to                String
+  template          String
+  subject           String?
+  status            String
+  providerMessageId String?
+  error             String?
+  sentAt            DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([to, createdAt])
+}
+
+model IdempotencyKey {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  scope     String
+  userId    String?
+  response  Json?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}

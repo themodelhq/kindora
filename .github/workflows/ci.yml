@@ -1,0 +1,239 @@
+name: KINDORA CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (lint + typecheck + unit tests + production build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # Strict lint (warnings do not fail ESLint by default; errors do).
+      - run: npm run lint:check
+      - run: npm run typecheck
+      - run: npm test
+      # PRODUCTION build — deliberately without VITE_DEMO_MODE. The demo build
+      # (which replaces the API layer with the local mock adapter) is produced
+      # only in the PR-only e2e job below, at build time.
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 5
+
+  backend:
+    name: Backend (lint + typecheck + unit tests + prisma validate + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # The Prisma CLI resolves the datasource env var even for offline
+      # commands (validate), so a dummy URL is required. No server is
+      # contacted — only schema files are read.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci_dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run lint:check
+      - run: npm run typecheck
+      - run: npm run test:unit
+      # v1.0.4: explicit financial-security regression gates — a regression in
+      # the payout state machine, dual approval, MFA or evidence validation
+      # fails CI even if the rest of the suite is green.
+      - name: Payout state machine + reconciliation regression (§13)
+        run: npx jest src/payouts --runInBand
+      - name: Dual-approval separation + evidence regression (§13)
+        run: npx jest src/withdrawals/withdrawals-approval.spec.ts --runInBand
+      - name: Fresh-MFA regression (§13)
+        run: npx jest src/mfa --runInBand
+      - run: npx prisma validate
+      - run: npm run build
+
+  backend-integration:
+    name: Backend (integration, PostgreSQL + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kindora
+          POSTGRES_PASSWORD: kindora
+          POSTGRES_DB: kindora_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # v1.0.4: MFA challenges are Redis-backed and FAIL CLOSED. A real Redis
+      # is required so the withdrawal suite exercises the REAL fresh-MFA flow
+      # (enroll -> confirm -> single-use challenge -> payout action).
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql://kindora:kindora@localhost:5432/kindora_test
+      JWT_SECRET: ci-test-secret
+      PROVIDER_MODE: mock
+      REDIS_URL: redis://localhost:6379/1
+      RUN_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      # Apply every committed migration to the service database, then run the
+      # integration suite against it (real Postgres + Redis, mock provider).
+      - run: npx prisma migrate deploy
+      # Seed ONLY the bootstrap admin (no demo data — SEED_DEMO is unset).
+      # The withdrawal/storage/webhook suites authenticate as this admin.
+      - name: Seed bootstrap admin
+        run: SEED_ADMIN_PASSWORD=Ci-Admin-Password-123 npm run prisma:seed
+      - name: Integration tests
+        run: npm run test:integration
+        env:
+          SEED_ADMIN_PASSWORD: Ci-Admin-Password-123
+
+  workers:
+    name: Workers (lint + typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+      - run: npm ci
+      - run: npm run lint:check
+      - run: npm run typecheck
+      - run: npm run build
+      # v1.0.4 §8.3: REAL image-processing test on the exact Sharp/libvips
+      # tree that ships (generate -> resize -> re-encode -> metadata check).
+      - name: Real image processing smoke test (Sharp/libvips)
+        run: node -e "
+          const sharp = require('sharp');
+          (async () => {
+            const img = await sharp({ create: { width: 800, height: 600, channels: 3, background: { r: 52, g: 168, b: 82 } } }).png().toBuffer();
+            const out = await sharp(img).resize(400, 300, { fit: 'cover' }).jpeg({ quality: 80 }).toBuffer();
+            const meta = await sharp(out).metadata();
+            if (meta.width !== 400 || meta.height !== 300 || meta.format !== 'jpeg') throw new Error('sharp pipeline produced unexpected output');
+            console.log('sharp OK:', meta.format, meta.width + 'x' + meta.height);
+          })().catch((e) => { console.error(e); process.exit(1); });
+          "
+
+  e2e:
+    name: E2E (demo build, PR-only)
+    runs-on: ubuntu-latest
+    needs: frontend
+    if: github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      # VITE_DEMO_MODE is a BUILD-TIME flag: Vite inlines it into the bundle
+      # when the demo build is produced. Setting it on the build step (not on
+      # the playwright step) is what makes the specs run against the local
+      # demo adapter instead of a real API.
+      - run: npm run build
+        env:
+          VITE_DEMO_MODE: "1"
+      - run: npm run e2e
+
+  security:
+    name: Security (dependency audit, fail on high)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # npm audit reads only package-lock.json — no install needed.
+      # v1.0.4: HIGH (and CRITICAL) vulnerabilities in PRODUCTION dependencies
+      # fail the build. Known dev-chain advisories must be documented in
+      # DEPENDENCY_SECURITY_REPORT.md instead of suppressed here.
+      # The gate FAILS on any high/critical advisory in production dependencies
+      # except the explicitly documented accepted risks (scripts/audit-gate.mjs
+      # <-> docs/DEPENDENCY_SECURITY_REPORT.md §3). Everything else is a hard
+      # failure — no `|| true`, no suppressed severities.
+      - name: Audit backend production dependencies (gate)
+        run: node scripts/audit-gate.mjs backend
+      - name: Audit frontend production dependencies (gate)
+        run: node scripts/audit-gate.mjs frontend
+      - name: Audit workers production dependencies (gate)
+        run: node scripts/audit-gate.mjs workers
+      - name: Record full audit snapshot (non-blocking)
+        run: |
+          echo "## Backend (full tree)" >> audit-report.txt
+          (cd backend && npm audit || true) >> audit-report.txt || true
+          echo "## Frontend (full tree)" >> audit-report.txt
+          (cd frontend && npm audit || true) >> audit-report.txt || true
+          echo "## Workers (full tree)" >> audit-report.txt
+          (cd workers && npm audit || true) >> audit-report.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-report
+          path: audit-report.txt
+          retention-days: 30
+
+  release-integrity:
+    name: Release integrity (SHA-256 manifest verification)
+    runs-on: ubuntu-latest
+    # v1.0.4 §16: when a release manifest is present, EVERY checksum must
+    # verify. A missing/failed verification is a hard failure.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify checksum manifest
+        run: |
+          if [ -f KINDORA_v1.0.4_SHA256SUMS.txt ]; then
+            sha256sum -c KINDORA_v1.0.4_SHA256SUMS.txt
+          else
+            echo "No KINDORA_v1.0.4_SHA256SUMS.txt in the repository — manifest verification is performed at release packaging time (see docs/KINDORA_v1.0.4_BACKUP_MANIFEST.md)."
+          fi

@@ -1,0 +1,433 @@
+# KINDORA v1.0.4 - Render Blueprint (payout lockdown edition)
+# Deploys the full stack: API (web), PostgreSQL, Redis-compatible Key Value,
+# background worker and scheduled cron jobs.
+# Deploy: Render dashboard -> New -> Blueprint -> select this repository.
+# Secrets marked `sync: false` are prompted securely at deploy time.
+#
+# PRODUCTION HARDENING NOTES (v1.0.1):
+#  - API + worker run on the `standard` plan: financial operations need
+#    consistent CPU/memory and must never sleep. Do not downgrade to starter
+#    for a live fundraising deployment (starter is acceptable only for a
+#    pre-launch staging copy).
+#  - The startup now FAILS CLOSED when production configuration is unsafe
+#    (missing JWT_SECRET, PROVIDER_MODE=mock, zero payment providers), so a
+#    misconfigured deploy refuses to boot instead of running unprotected.
+#  - Migrations run exclusively through preDeployCommand (`prisma migrate
+#    deploy`): forward-only, never destructive; a failed migration blocks
+#    the release from starting (Render rolls the deploy back).
+#  - PAYPAL_ENV ships as `sync: false` — the operator MUST consciously choose
+#    `live` after PayPal onboarding; defaulting to sandbox silently would be
+#    worse than refusing to boot a PayPal transaction.
+#  - Uptime monitors should watch /api/v1/health (liveness) AND
+#    /api/v1/health/database (readiness) — a 200 on liveness alone does not
+#    prove the database is reachable.
+#
+# PAYOUT LOCKDOWN NOTES (v1.0.4):
+#  - API and workers share DATABASE_URL/REDIS_URL and the same payout policy
+#    env (WITHDRAWAL_DUAL_APPROVAL_MODE): no service may run a different
+#    dual-approval threshold.
+#  - Migrations run ONLY through the API preDeployCommand — workers and cron
+#    jobs never run prisma migrate (no concurrent migration runs).
+#  - MFA challenges are Redis-backed and fail closed: the Key Value instance
+#    is required for payout approvals (health/redis readiness must be up).
+
+services:
+  # ---------------------------------------------------------------- API
+  - type: web
+    name: kindora-api
+    runtime: node
+    plan: standard
+    region: oregon
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    preDeployCommand: npx prisma migrate deploy
+    startCommand: npm run start:prod
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: APP_NAME
+        value: KINDORA
+      - key: API_PREFIX
+        value: api/v1
+      - key: FRONTEND_URL
+        sync: false
+      - key: BACKEND_URL
+        sync: false
+      # MUST list the exact production frontend origin(s); cookie CSRF checks fail closed when empty.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: PROVIDER_MODE
+        value: live
+      - key: JWT_ACCESS_TTL
+        value: "900"
+      - key: JWT_REFRESH_TTL_DAYS
+        value: "30"
+      - key: PLATFORM_FEE_PERCENT
+        value: "0"
+      - key: DEFAULT_CURRENCY
+        value: NGN
+      # v1.0.4 dual-approval policy. Mode ALL (default) = EVERY payout requires
+      # two distinct administrators AND executor separation. THRESHOLD mode
+      # requires a positive WITHDRAWAL_DUAL_APPROVAL_THRESHOLD_MINOR. There is
+      # NO configuration that disables dual approval.
+      - key: WITHDRAWAL_DUAL_APPROVAL_MODE
+        value: ALL
+      - key: WITHDRAWAL_DUAL_APPROVAL_THRESHOLD_MINOR
+        value: "0"
+      # Fresh-MFA TOTP secret encryption (optional dedicated key; falls back to
+      # a domain-separated key derived from JWT_SECRET when unset).
+      - key: MFA_ENCRYPTION_KEY
+        sync: false
+      # Require rediss:// (TLS) for Redis connections in production.
+      - key: REDIS_REQUIRE_TLS
+        value: "false"
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_REGION
+        value: us-east-1
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      - key: STORAGE_FORCE_PATH_STYLE
+        value: "true"
+      - key: STORAGE_PUBLIC_BASE_URL
+        sync: false
+      - key: STORAGE_MAX_UPLOAD_MB
+        value: "15"
+      # v1.0.7 payout execution integrity
+      - key: PAYOUT_SUPPORTED_PROVIDERS
+        value: "PAYSTACK,FLUTTERWAVE"
+      - key: PAYOUT_UNKNOWN_ESCALATION_MINUTES
+        value: "120"
+      - key: PAYOUT_OUTBOX_SWEEP_SECONDS
+        value: "30"
+      - key: WORKER_INGEST_TOKEN
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: KINDORA
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: FLUTTERWAVE_SECRET_KEY
+        sync: false
+      - key: FLUTTERWAVE_WEBHOOK_HASH
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      # Operator must set `live` after PayPal production onboarding.
+      - key: PAYPAL_ENV
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
+      - key: AI_PROVIDER_API_KEY
+        sync: false
+      - key: AI_PROVIDER_BASE_URL
+        sync: false
+      - key: AI_PROVIDER_MODEL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
+  # ------------------------------------------------------- Background worker
+  - type: worker
+    name: kindora-worker
+    runtime: node
+    plan: standard
+    region: oregon
+    rootDir: workers
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:prod
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+      - key: PROVIDER_MODE
+        value: live
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      # v1.0.7 payout execution integrity
+      - key: PAYOUT_SUPPORTED_PROVIDERS
+        value: "PAYSTACK,FLUTTERWAVE"
+      - key: PAYOUT_UNKNOWN_ESCALATION_MINUTES
+        value: "120"
+      - key: PAYOUT_OUTBOX_SWEEP_SECONDS
+        value: "30"
+      - key: WORKER_INGEST_TOKEN
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      # Malware scanning bridge (optional). When empty, sensitive documents
+      # stay quarantined (fail-safe) and public images are re-encoded instead.
+      - key: MALWARE_SCAN_ENDPOINT
+        sync: false
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_REGION
+        value: us-east-1
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      - key: STORAGE_FORCE_PATH_STYLE
+        value: "true"
+
+  # --------------------------------------------- Redis-compatible Key Value
+  - type: keyvalue
+    name: kindora-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: noeviction
+
+  # ------------------------------------------------------------- Cron jobs
+  - type: cron
+    name: kindora-daily-analytics
+    runtime: node
+    region: oregon
+    rootDir: workers
+    schedule: "30 2 * * *"
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/cron/daily-analytics.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+
+  - type: cron
+    name: kindora-campaign-reminders
+    runtime: node
+    region: oregon
+    rootDir: workers
+    schedule: "5 * * * *"
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/cron/campaign-reminders.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+      - key: FRONTEND_URL
+        sync: false
+
+  - type: cron
+    name: kindora-recurring-donations
+    runtime: node
+    region: oregon
+    rootDir: workers
+    schedule: "*/15 * * * *"
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/cron/recurring-donations.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+      - key: PROVIDER_MODE
+        value: live
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+  - type: cron
+    name: kindora-weekly-reports
+    runtime: node
+    region: oregon
+    rootDir: workers
+    schedule: "0 7 * * 1"
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/cron/weekly-reports.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+      # v1.0.7 payout execution integrity
+      - key: PAYOUT_SUPPORTED_PROVIDERS
+        value: "PAYSTACK,FLUTTERWAVE"
+      - key: PAYOUT_UNKNOWN_ESCALATION_MINUTES
+        value: "120"
+      - key: PAYOUT_OUTBOX_SWEEP_SECONDS
+        value: "30"
+      - key: WORKER_INGEST_TOKEN
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+
+  - type: cron
+    name: kindora-database-maintenance
+    runtime: node
+    region: oregon
+    rootDir: workers
+    schedule: "0 3 * * 0"
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/cron/db-maintenance.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+
+  - type: cron
+    name: kindora-reconciliation-digest
+    runtime: node
+    region: oregon
+    rootDir: workers
+    schedule: "0 4 * * *"
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/cron/reconciliation-digest.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kindora-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kindora-redis
+          property: connectionString
+      # v1.0.7 payout execution integrity
+      - key: PAYOUT_SUPPORTED_PROVIDERS
+        value: "PAYSTACK,FLUTTERWAVE"
+      - key: PAYOUT_UNKNOWN_ESCALATION_MINUTES
+        value: "120"
+      - key: PAYOUT_OUTBOX_SWEEP_SECONDS
+        value: "30"
+      - key: WORKER_INGEST_TOKEN
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+
+databases:
+  - name: kindora-db
+    # Persistent, paid tier. For high-volume production consider `standard`
+    # plus automated daily backups (see docs/BACKUP_AND_RECOVERY.md).
+    plan: basic-256mb
+    region: oregon
+    databaseName: kindora
+    user: kindora

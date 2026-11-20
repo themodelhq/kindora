@@ -1,0 +1,46 @@
+{
+  "release": "KINDORA v1.0.14 SECURITY COMPLETE",
+  "artifact": {
+    "filename": "KINDORA_v1.0.14_SECURITY_COMPLETE.zip",
+    "sha256Recording": "RECORDED-EXTERNALLY-SEE-SIDECAR — a file inside the archive cannot state the archive's own final SHA-256 (self-reference); the final hash is recorded in the external sidecar KINDORA_v1.0.14_SECURITY_COMPLETE.zip.sha256 and in the delivery-directory attestation. This attestation binds itself to the artifact via contentPinSha256 (recomputed by the verifier).",
+    "sizeBytesRecording": "RECORDED-EXTERNALLY-SEE-SIDECAR",
+    "contentPinSha256": "2f451ed31b60e04c08d3daac6e4076b0c0bc35446b2998e7faa629162aed9302"
+  },
+  "verification": {
+    "zip_integrity": "PASS",
+    "internal_manifest": "PASS",
+    "missing_files": 0,
+    "unexpected_files": 0,
+    "duplicate_paths": 0,
+    "unsafe_paths": 0,
+    "internalManifestEntries": "490",
+    "uncompressedSizeBytes": "8484651",
+    "zipEntries": "595",
+    "regularFileCount": "493"
+  },
+  "tests": {
+    "backend": "595/595 PASSED (25 suites) — logs/backend-tests.log",
+    "frontend": "53/53 PASSED (5 files) — logs/frontend-tests.log",
+    "flutterwave": "157/157 PASSED (3 suites; adapter byte-identical to v1.0.13, d9b1aced…dc17) — logs/flutterwave-regression.log",
+    "paystack": "111/111 PASSED (3 suites) — logs/paystack-regression.log",
+    "integration": "63/63 PASSED via the SAFE runner (fresh PostgreSQL 17.9 + Redis 7.2.5 per run) — logs/integration-tests.log",
+    "integration_runner_safety": "16/16 PASSED (scenarios A-H; decoy PostgreSQL+Redis alive after every scenario) — logs/integration-safety-tests.log",
+    "payout_ledger_regression": "184/184 PASSED (9 suites) — logs/payout-ledger-regression.log",
+    "engineering_gates": "tsc x2 clean; prisma validate clean; migrations-vs-schema structural PASS; dependency audit gates x3 PASS — logs/engineering-gates.log"
+  },
+  "baseline_comparison": {
+    "run_1": "NO NEW REGRESSION — 2026-11-20, pristine v1.0.13 baseline (tarball 350c961e…489eb) vs release tree at source rev 072ee3910fabf3b9f8c4fd68d98752c48a617f37; 3 discovered / 3 executed / 3 passed both sides / 0 errors — logs/ab-comparison-run-1.log",
+    "run_2": "NO NEW REGRESSION — independent second run, identical accounting — logs/ab-comparison-run-2.log"
+  },
+  "release_verifier": {
+    "run_1": "EXECUTED POST-FREEZE against the frozen artifact — external record: release-verification-logs/verifier-run-1.log in the delivery directory",
+    "run_2": "EXECUTED POST-FREEZE, independent second run — external record: release-verification-logs/verifier-run-2.log in the delivery directory"
+  },
+  "sourceRevision": "072ee3910fabf3b9f8c4fd68d98752c48a617f37",
+  "sourceTreeArchiveSha256": "e11f48de3b76b126861451d7ef014f0b9d263a4c5ab0aac24c8cf88cd9b549bd",
+  "buildEnvironment": "Linux sandbox; Node v24.22.3; npm ci from committed lockfiles; PostgreSQL 17.9 (@embedded-postgres/linux-x64@17.9.0-beta.16); Redis 7.2.5 (source build, sha256-verified tarball 5981179706f8391f03be91d951acafaeda91af7fac56beffb2701963103e423d)",
+  "flutterwaveAdapterSha256": "d9b1aceddd947f19ca9750c3d2c589eed7d91125f22890f70b18d35bbb44dc17 (unchanged from the v1.0.13-verified hash)",
+  "providerSandbox": "BLOCKED — FLUTTERWAVE_SECRET_KEY / PAYSTACK_SECRET_KEY unavailable in the build environment; no live-provider test was executed or claimed",
+  "productionReadiness": "NOT CLAIMED — archive-verification release only (staging-ready); live money-path verification requires provider sandbox credentials and is a documented blocker accepted by the archive release policy",
+  "release_status": "APPROVED-FOR-ARCHIVE-RELEASE"
+}

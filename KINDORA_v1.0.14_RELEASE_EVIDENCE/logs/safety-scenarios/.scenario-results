@@ -1,0 +1,16 @@
+PASS A-success (exit 0, PASS reported)
+PASS B-failed-test (nonzero exit)
+PASS C-interrupt (nonzero exit)
+PASS D-missing-service
+PASS E-port-conflict
+PASS F-cleanup-failure-reported
+PASS G1-collision-safe
+PASS G1-no-adoption
+PASS G2-invalid-tmpdir-refused
+PASS G3-symlink-tmpdir-safe
+PASS G4-permission-failure-refused
+PASS H-overlap
+PASS H-run1-success
+PASS H-run2-success
+PASS H-cleanup-isolation
+PASS H-distinct-resources

@@ -1,0 +1,62 @@
+# KINDORA v1.0.14 SECURITY COMPLETE — RELEASE FIGURES
+# (master prompt 2026-11-20 §5 — every value measured from the actual final
+# artifact at packaging time; values marked RECORDED-EXTERNALLY-SEE-SIDECAR are
+# properties of the finished ZIP that a file INSIDE the archive cannot state
+# without self-reference — see README.md "Circular-hash avoidance procedure").
+#
+Release: KINDORA v1.0.14 SECURITY COMPLETE
+Archive filename: KINDORA_v1.0.14_SECURITY_COMPLETE.zip
+Archive SHA-256: RECORDED-EXTERNALLY-SEE-SIDECAR
+Archive size: RECORDED-EXTERNALLY-SEE-SIDECAR
+
+# --- machine keys (checked by scripts/verify_release_zip_v114.sh) ---
+ZIP_ENTRIES=595
+ZIP_FILES=493
+MANIFEST_ENTRIES=490
+INTERNAL_MANIFEST_COUNT=490
+ZIP_BYTES=RECORDED-EXTERNALLY-SEE-SIDECAR
+ZIP_SHA256=RECORDED-EXTERNALLY-SEE-SIDECAR
+UNCOMPRESSED_BYTES=8484651
+SOURCE_REV=072ee3910fabf3b9f8c4fd68d98752c48a617f37
+SOURCE_TREE_ARCHIVE_SHA256=e11f48de3b76b126861451d7ef014f0b9d263a4c5ab0aac24c8cf88cd9b549bd
+
+# --- verification results (§5 template) ---
+Manifest verification: PASS
+Missing manifest entries: 0
+Unexpected files: 0
+Duplicate archive paths: 0
+Unsafe paths: 0
+ZIP CRC/integrity: PASS
+Internal manifest count: 490
+MANIFEST_VERIFICATION=PASS
+MISSING_MANIFEST_ENTRIES=0
+UNEXPECTED_FILES=0
+DUPLICATE_ARCHIVE_PATHS=0
+UNSAFE_ARCHIVE_PATHS=0
+ZIP_CRC_INTEGRITY=PASS
+
+# --- test results (all measured 2026-11-20, logs in evidence/logs/) ---
+Backend tests: 595/595 PASSED (25 suites)
+Frontend tests: 53/53 PASSED (5 files)
+Flutterwave tests: 157/157 PASSED (3 suites)
+Paystack tests: 111/111 PASSED (3 suites)
+Integration tests: 63/63 PASSED (auth 16, webhooks 4, storage 3, money-path 12, withdrawals 12, payout-lockdown 16 via 3 disjoint chunks)
+Integration runner safety tests: 16/16 PASSED (scenarios A-H; decoy PG+Redis alive after every scenario)
+A/B baseline comparison: NO NEW REGRESSION (two independent runs)
+Release verifier run 1: EXECUTED POST-FREEZE (external: release-verification-logs/verifier-run-1.log in the delivery directory)
+Release verifier run 2: EXECUTED POST-FREEZE (external: release-verification-logs/verifier-run-2.log in the delivery directory)
+Release approval: APPROVED-FOR-ARCHIVE-RELEASE
+BACKEND_TESTS=595/595 PASSED (25 suites)
+FRONTEND_TESTS=53/53 PASSED (5 files)
+FLUTTERWAVE_TESTS=157/157 PASSED (3 suites)
+PAYSTACK_TESTS=111/111 PASSED (3 suites)
+INTEGRATION_TESTS=63/63 PASSED (5 suites + payout-lockdown 3 disjoint chunks)
+RUNNER_SAFETY_TESTS=16/16 PASSED (scenarios A-H)
+AB_BASELINE_COMPARISON=NO NEW REGRESSION (two independent runs vs pristine v1.0.13 baseline)
+RELEASE_VERIFIER_RUN_1=EXECUTED POST-FREEZE (external: release-verification-logs/verifier-run-1.log)
+RELEASE_VERIFIER_RUN_2=EXECUTED POST-FREEZE (external: release-verification-logs/verifier-run-2.log)
+RELEASE_APPROVAL=APPROVED-FOR-ARCHIVE-RELEASE
+
+# notes
+Flutterwave payout adapter: d9b1aceddd947f19ca9750c3d2c589eed7d91125f22890f70b18d35bbb44dc17 (byte-identical to the v1.0.13-verified adapter — UNCHANGED)
+Historical-count reconciliation: the superseded archive attested "52/52 checks" (an earlier verifier revision) and a flutterwave summary of "168" (4 suites, unsubstantiated raw output); the current verifier defines its own check set (see VERIFICATION RESULT lines in the external verifier-run logs) and the measured flutterwave figure is 157/157 across the 3 committed suites — see reports/TEST_RESULTS.md §reconciliation.

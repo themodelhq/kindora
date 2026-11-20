@@ -1,0 +1,9 @@
+FINAL_RELEASE_SHA256.txt — KINDORA v1.0.14 SECURITY COMPLETE
+=============================================================
+SHA-256 of the internal manifest SHA256SUMS.txt (recomputed by the packaged
+verifier from the archive; verified on mismatch — this file is deliberately
+OUTSIDE the manifest's own coverage to keep the hash graph acyclic, and it
+deliberately does NOT contain the final ZIP's own SHA-256, which is recorded
+in the external sidecar KINDORA_v1.0.14_SECURITY_COMPLETE.zip.sha256):
+
+2f451ed31b60e04c08d3daac6e4076b0c0bc35446b2998e7faa629162aed9302

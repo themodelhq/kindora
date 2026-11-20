@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Warm-trust theme: emerald primary, amber accent, warm white surfaces */
+    --background: 40 60% 99%;
+    --foreground: 160 25% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 160 25% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 160 25% 12%;
+    --primary: 160 84% 30%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 45% 95%;
+    --secondary-foreground: 160 25% 15%;
+    --accent: 38 92% 50%;
+    --accent-foreground: 30 50% 12%;
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --muted: 40 30% 94%;
+    --muted-foreground: 160 10% 40%;
+    --border: 40 25% 88%;
+    --input: 40 25% 86%;
+    --ring: 160 84% 30%;
+    --radius: 0.75rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    min-height: 100dvh;
+  }
+
+  /* Respect iOS safe areas */
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* Long-list scroll containers */
+.max-h-96 {
+  scrollbar-width: thin;
+}
