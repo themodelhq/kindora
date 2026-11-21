@@ -1,0 +1,71 @@
+# Root Netlify configuration for KINDORA.
+# This makes the repository deployable even if Netlify's Base directory UI is unset.
+[build]
+  base = "frontend"
+  command = "npm ci && npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  VITE_APP_NAME = "KINDORA"
+  VITE_APP_URL = "https://kindoraapp.netlify.app"
+  VITE_API_URL = "https://kindora-j5xi.onrender.com"
+  VITE_ENVIRONMENT = "production"
+  VITE_DEFAULT_CURRENCY = "NGN"
+  VITE_DEFAULT_LANGUAGE = "en"
+  # VITE_DEMO_MODE intentionally omitted: production must use the live API.
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy = """
+      default-src 'self';
+      script-src 'self' 'wasm-unsafe-eval';
+      style-src 'self' 'unsafe-inline';
+      img-src 'self' data: blob: https:;
+      font-src 'self' data:;
+      connect-src 'self' https://api.kindora.com https://*.onrender.com https://*.paystack.co https://api.flutterwave.com https://api.stripe.com https://api-m.paypal.com https://api-m.sandbox.paypal.com https://*.sentry.io;
+      frame-src https://*.paystack.co https://api.flutterwave.com https://js.stripe.com https://www.paypal.com https://api-m.sandbox.paypal.com;
+      worker-src 'self' blob:;
+      manifest-src 'self';
+      object-src 'none';
+      base-uri 'self';
+      form-action 'self';
+      frame-ancestors 'none';
+      upgrade-insecure-requests;
+    """
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
